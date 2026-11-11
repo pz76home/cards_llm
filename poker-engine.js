@@ -910,6 +910,68 @@ class TexasHoldemGame {
     const callAmount = Math.max(0, this.currentBet - this.llmBet);
     const validActions = this.getValidActions('llm', true);
 
+    const allCards = [...this.llmHoleCards, ...this.communityCards];
+    let handRating = 'Unknown';
+    let handDescription = '';
+    let handStrengthScore = 0; // 0 (weakest) to 10 (strongest)
+
+    if (this.communityCards.length >= 3) {
+      const evaluation = evaluate7Cards(allCards);
+      handDescription = evaluation.description;
+      if (evaluation.rankValue === 0) {
+        handRating = 'Very Weak (Unpaired High Card)';
+        handStrengthScore = 1;
+      } else if (evaluation.rankValue === 1) {
+        handRating = 'Marginal (One Pair)';
+        handStrengthScore = 4;
+      } else if (evaluation.rankValue === 2) {
+        handRating = 'Good (Two Pair)';
+        handStrengthScore = 7;
+      } else if (evaluation.rankValue >= 3) {
+        handRating = `Monster (${evaluation.handName})`;
+        handStrengthScore = 9;
+      }
+    } else if (this.llmHoleCards.length === 2) {
+      const c1 = this.llmHoleCards[0];
+      const c2 = this.llmHoleCards[1];
+      const highR = Math.max(c1.rank, c2.rank);
+      const lowR = Math.min(c1.rank, c2.rank);
+      const isPair = c1.rank === c2.rank;
+      const isSuited = c1.suit === c2.suit;
+
+      if (isPair) {
+        if (highR >= 10) {
+          handDescription = `Premium Pocket Pair of ${c1.rankName}s`;
+          handRating = 'Very Strong Preflop';
+          handStrengthScore = 9;
+        } else {
+          handDescription = `Pocket Pair of ${c1.rankName}s`;
+          handRating = 'Playable Pocket Pair';
+          handStrengthScore = 6;
+        }
+      } else if (highR >= 13 && lowR >= 10) {
+        handDescription = `${isSuited ? 'Suited' : 'Offsuit'} Big Cards (${c1.rankName}-${c2.rankName})`;
+        handRating = isSuited ? 'Very Strong Broadway' : 'Strong Broadway';
+        handStrengthScore = isSuited ? 8 : 7;
+      } else if (isSuited && highR - lowR === 1 && lowR >= 6) {
+        handDescription = `Suited Connectors (${c1.rankName}-${c2.rankName})`;
+        handRating = 'Speculative / Drawing Hand';
+        handStrengthScore = 5;
+      } else if (highR <= 9 && !isPair) {
+        handDescription = `Low Trash Cards (${c1.rankName}-${c2.rankName} ${isSuited ? 'Suited' : 'Offsuit'})`;
+        handRating = 'Very Weak Trash (Auto-fold to raises)';
+        handStrengthScore = 1;
+      } else {
+        handDescription = `Mediocre Cards (${c1.rankName}-${c2.rankName} ${isSuited ? 'Suited' : 'Offsuit'})`;
+        handRating = 'Marginal Hand';
+        handStrengthScore = 3;
+      }
+    }
+
+    const totalPotAfterCall = this.pot + callAmount;
+    const potOddsPct = callAmount > 0 ? ((callAmount / totalPotAfterCall) * 100).toFixed(1) : 0;
+    const stackRiskPct = this.llmChips > 0 ? ((callAmount / this.llmChips) * 100).toFixed(1) : 0;
+
     return {
       gameStage: this.stage,
       dealer: this.dealer,
@@ -924,7 +986,13 @@ class TexasHoldemGame {
       communityCards: this.communityCards.map(c => c.toCode()),
       llmHoleCards: this.llmHoleCards.map(c => c.toCode()),
       validActions: validActions.map(a => a.type),
-      recentActions: this.history.slice(-8).map(h => `${h.player}: ${h.text}`)
+      recentActions: this.history.slice(-8).map(h => `${h.player}: ${h.text}`),
+      handDescription,
+      handRating,
+      handStrengthScore,
+      potOddsPct,
+      stackRiskPct,
+      isFreeToCheck: callAmount === 0
     };
   }
 }

@@ -1,0 +1,20 @@
+{
+  "name": "texas-holdem-ollama",
+  "version": "1.0.0",
+  "description": "Texas Hold'em Poker vs Local Ollama LLMs",
+  "main": "server.js",
+  "scripts": {
+    "start": "node server.js",
+    "test": "node -e \"require('./poker-engine.js')\""
+  },
+  "keywords": [
+    "poker",
+    "texas-holdem",
+    "ollama",
+    "llm",
+    "ai",
+    "game"
+  ],
+  "author": "",
+  "license": "MIT"
+}

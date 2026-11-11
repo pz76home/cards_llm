@@ -1,0 +1,274 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Texas Hold'em vs Ollama AI</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header class="top-bar">
+    <div class="title-section">
+      <h1>♠ Texas Hold'em AI Duel ♠</h1>
+      <span class="badge-tag" id="handNumberBadge">Hand #1</span>
+    </div>
+
+    <!-- Blinds & Timer Progression -->
+    <div class="blind-timer-bar">
+      <div class="blind-stat">
+        <span class="label">Blinds</span>
+        <span class="value" id="blindsDisplay">500 / 1,000</span>
+      </div>
+      <div class="blind-stat">
+        <span class="label" id="timerLabel">Next Level In</span>
+        <span class="timer-countdown" id="timerDisplay">10:00</span>
+      </div>
+      <div id="blindCappedBadge" class="capped-badge" style="display: none;">MAX BLIND (2,500)</div>
+    </div>
+
+    <!-- Ollama Model & Persona Controls -->
+    <div class="ollama-controls">
+      <div class="status-indicator" id="ollamaStatusPill">
+        <span class="status-dot offline" id="statusDot"></span>
+        <span id="statusText">Scanning Ollama...</span>
+      </div>
+
+      <select id="modelSelect" class="select-styled" title="Select Ollama Model">
+        <option value="builtin-heuristic">🤖 Built-in Smart Bot</option>
+      </select>
+
+      <span id="vramStatusBadge" class="badge-tag" style="cursor: pointer; background: rgba(148, 163, 184, 0.2); color: #cbd5e1; border-color: rgba(148, 163, 184, 0.4);" title="VRAM Memory Status">💤 Cold</span>
+
+      <button id="preloadBtn" class="btn-icon" style="background: rgba(234, 179, 8, 0.2); border-color: var(--gold); color: var(--gold); font-weight: 600; font-size: 0.75rem; padding: 5px 10px;" title="Preload model into GPU VRAM / RAM now">
+        ⚡ Load VRAM
+      </button>
+
+      <button id="refreshModelsBtn" class="btn-icon" title="Refresh local Ollama models">
+        🔄
+      </button>
+
+      <select id="personaSelect" class="select-styled" title="AI Playstyle Persona">
+        <option value="balanced">⚖️ Balanced Pro</option>
+        <option value="aggressive">🦈 Aggressive Shark</option>
+        <option value="tight">🪨 Tight Rock</option>
+        <option value="wild">🎰 Wild Gambler</option>
+        <option value="trash_talker">🎙️ Trash Talker</option>
+      </select>
+
+      <button id="soundToggleBtn" class="btn-icon" title="Toggle Sound">🔊</button>
+      <button id="logToggleBtn" class="btn-icon" title="Toggle Hand Logs">📜</button>
+      <button id="settingsBtn" class="btn-icon" title="Ollama Settings">⚙️</button>
+    </div>
+  </header>
+
+  <!-- Main Game Container -->
+  <main class="game-container">
+    <div class="poker-table-wrapper">
+      <div class="poker-felt">
+
+        <!-- Top: LLM Opponent Area -->
+        <div class="player-area top-player">
+          <div class="player-info" id="llmInfoBox">
+            <div class="player-avatar">🤖</div>
+            <div class="player-details">
+              <div class="player-name">
+                <span id="llmDisplayName">Ollama AI</span>
+                <span id="llmDealerBtn" class="dealer-button" style="display: none;">D</span>
+              </div>
+              <div class="chips-badge">
+                🪙 <span id="llmChipsDisplay">50,000</span>
+              </div>
+            </div>
+            <div class="current-bet-pill" id="llmBetDisplay" style="display: none;">
+              Bet: 0
+            </div>
+          </div>
+
+          <!-- LLM Thought & Speech Dialogue -->
+          <div class="llm-bubble-container">
+            <div class="speech-bubble" id="llmSpeechBox">
+              "Let's see who holds the cards tonight."
+            </div>
+            <div class="thought-bubble" id="llmThoughtBox" style="display: none;">
+              [AI Thinking: Preflop evaluation...]
+            </div>
+            <button id="skipLlmWaitBtn" class="btn-preset" style="display: none; font-size: 0.72rem; padding: 3px 8px; align-self: flex-start; color: #facc15; border-color: rgba(250, 204, 21, 0.4);" title="Switch to fast heuristic bot for this single turn">
+              ⏩ Skip Wait & Use Quick Bot
+            </button>
+          </div>
+
+          <!-- LLM Cards -->
+          <div class="cards-row" id="llmCardsRow">
+            <div class="card hidden-card"></div>
+            <div class="card hidden-card"></div>
+          </div>
+        </div>
+
+        <!-- Center: Pot & Community Cards & Winner Banner -->
+        <div class="center-felt">
+          <div class="pot-display">
+            <span class="pot-label">TOTAL POT</span>
+            <span class="pot-amount" id="potAmountDisplay">$1,500</span>
+          </div>
+
+          <div class="community-cards" id="communityCardsRow">
+            <div class="card-placeholder"></div>
+            <div class="card-placeholder"></div>
+            <div class="card-placeholder"></div>
+            <div class="card-placeholder"></div>
+            <div class="card-placeholder"></div>
+          </div>
+
+          <div id="winnerBanner" class="winner-banner" style="display: none;">
+            Winner announcement
+          </div>
+        </div>
+
+        <!-- Bottom: Human Player Area -->
+        <div class="player-area bottom-player">
+          <div class="cards-row" id="humanCardsRow">
+            <!-- Dynamic Human Cards Rendered Here -->
+            <div class="card-placeholder"></div>
+            <div class="card-placeholder"></div>
+          </div>
+
+          <div class="hand-eval-badge" id="humanHandEval">
+            High Card
+          </div>
+
+          <div class="player-info" id="humanInfoBox">
+            <div class="player-avatar">👤</div>
+            <div class="player-details">
+              <div class="player-name">
+                <span>Human Player</span>
+                <span id="humanDealerBtn" class="dealer-button" style="display: none;">D</span>
+              </div>
+              <div class="chips-badge">
+                🪙 <span id="humanChipsDisplay">50,000</span>
+              </div>
+            </div>
+            <div class="current-bet-pill" id="humanBetDisplay" style="display: none;">
+              Bet: 0
+            </div>
+          </div>
+        </div>
+
+      </div>
+    </div>
+
+    <!-- Action Controls Panel -->
+    <section class="controls-panel" id="controlsPanel">
+      <div class="controls-row">
+        <div class="bet-presets">
+          <button class="btn-preset" id="presetMinBtn">Min</button>
+          <button class="btn-preset" id="presetHalfPotBtn">1/2 Pot</button>
+          <button class="btn-preset" id="presetPotBtn">Pot</button>
+          <button class="btn-preset" id="preset2xBtn">2x Pot</button>
+          <button class="btn-preset" id="presetAllInBtn">All-In</button>
+        </div>
+
+        <div class="raise-slider-group">
+          <input type="range" id="raiseSlider" min="1000" max="50000" step="500" value="1000">
+          <input type="number" id="raiseAmountInput" class="raise-amount-input" value="1000">
+        </div>
+
+        <button class="btn-giveup" id="giveUpBtn">Resign Match</button>
+      </div>
+
+      <div class="controls-row action-buttons">
+        <button class="btn-action btn-fold" id="btnFold">Fold</button>
+        <button class="btn-action btn-check-call" id="btnCheckCall">Check</button>
+        <button class="btn-action btn-raise" id="btnRaise">Raise $2,000</button>
+        <button class="btn-action btn-allin" id="btnAllIn">All-In</button>
+        <button class="btn-next-hand" id="btnNextHand" style="display: none;">Deal Next Hand ➡️</button>
+      </div>
+    </section>
+  </main>
+
+  <!-- Log Panel Drawer -->
+  <aside class="log-drawer" id="logDrawer">
+    <div style="display: flex; justify-content: space-between; align-items: center;">
+      <h3 style="color: var(--gold); font-size: 0.95rem;">Hand History Log</h3>
+      <button class="btn-icon" id="closeLogBtn">✖</button>
+    </div>
+    <div class="log-list" id="logList"></div>
+  </aside>
+
+  <!-- Settings Modal (Ollama URL & Model Timeout) -->
+  <div class="modal-overlay" id="settingsModal">
+    <div class="modal-card">
+      <h2>Ollama Settings</h2>
+      <label style="font-size: 0.85rem; color: #94a3b8;">Ollama Server URL:</label>
+      <input type="text" id="ollamaUrlInput" class="select-styled" value="http://127.0.0.1:11434" style="width: 100%;">
+
+      <label style="font-size: 0.85rem; color: #94a3b8; margin-top: 8px;">LLM Move Decision Time Limit (distinct from VRAM warm up):</label>
+      <select id="timeoutSelect" class="select-styled" style="width: 100%;">
+        <option value="60000">60 Seconds</option>
+        <option value="120000">120 Seconds (2 Minutes)</option>
+        <option value="180000" selected>180 Seconds (3 Minutes - Default)</option>
+        <option value="240000">240 Seconds (4 Minutes)</option>
+        <option value="300000">300 Seconds (5 Minutes)</option>
+      </select>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+        <div>
+          <label style="font-size: 0.82rem; color: #94a3b8;">OLLAMA_NUM_GPU:</label>
+          <input type="number" id="numGpuInput" class="select-styled" value="999" style="width: 100%;" title="Layers to offload to GPU (999 = max)">
+        </div>
+        <div>
+          <label style="font-size: 0.82rem; color: #94a3b8;">OLLAMA_NUM_PARALLEL:</label>
+          <input type="number" id="numParallelInput" class="select-styled" value="1" style="width: 100%;" title="Concurrent requests handled by model">
+        </div>
+      </div>
+
+      <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-top: 8px;">
+        <div>
+          <label style="font-size: 0.82rem; color: #94a3b8;">OLLAMA_FLASH_ATTENTION:</label>
+          <select id="flashAttentionSelect" class="select-styled" style="width: 100%;">
+            <option value="1" selected>1 (Enabled - Recommended)</option>
+            <option value="0">0 (Disabled)</option>
+          </select>
+        </div>
+        <div>
+          <label style="font-size: 0.82rem; color: #94a3b8;">Keep Model in VRAM:</label>
+          <select id="keepAliveSelect" class="select-styled" style="width: 100%;">
+            <option value="15m">15 Minutes</option>
+            <option value="1h">1 Hour</option>
+            <option value="2h" selected>2 Hours (Default)</option>
+            <option value="-1">Indefinitely</option>
+          </select>
+        </div>
+      </div>
+
+      <label style="display: flex; align-items: center; gap: 8px; font-size: 0.85rem; color: #cbd5e1; margin-top: 10px; cursor: pointer;">
+        <input type="checkbox" id="showShowdownThoughtsCheckbox">
+        Reveal AI thoughts at Showdown only (Hidden during hands)
+      </label>
+
+      <p style="font-size: 0.8rem; color: #94a3b8; margin-top: 6px;">
+        Tip: Click <strong>⚡ Load VRAM</strong> in the top bar before dealing to preload the model into GPU memory and prevent turn delays.
+      </p>
+      <div class="modal-actions">
+        <button class="btn-preset" id="cancelSettingsBtn">Cancel</button>
+        <button class="btn-action btn-check-call" id="saveSettingsBtn">Save & Apply</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Game Over Modal -->
+  <div class="modal-overlay" id="gameOverModal">
+    <div class="modal-card" style="text-align: center;">
+      <h2 id="gameOverTitle">Game Over!</h2>
+      <p id="gameOverMsg">A player has won all the chips!</p>
+      <div style="margin: 16px 0; font-size: 1.1rem; color: var(--gold);" id="gameOverStats"></div>
+      <div class="modal-actions" style="justify-content: center;">
+        <button class="btn-action btn-check-call" id="restartGameBtn">Play New Match ($50,000)</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

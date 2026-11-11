@@ -168,11 +168,11 @@ class OllamaClient {
 
   buildSystemPrompt(persona) {
     const personaGuides = {
-      balanced: 'You are a balanced, sharp poker professional. You calculate pot odds, mix up your bets, and rarely make blunders.',
-      aggressive: 'You are an aggressive poker shark. You love to put maximum pressure on your opponent with big bets, raises, and frequent bluffs.',
-      tight: 'You are an ultra-disciplined rock. You fold weak hands quickly, check to control the pot, and only bet big with monsters.',
-      wild: 'You are an erratic, unpredictable high-roller gambler. You love shoving all-in, making crazy calls, and trash-talking.',
-      trash_talker: 'You are a sarcastic casino regular who constantly banters and teases your opponent with clever poker remarks.'
+      balanced: 'You are a disciplined, mathematically sharp poker professional. You calculate pot odds, fold weak hands facing pressure, and protect your tournament chips.',
+      aggressive: 'You are an aggressive poker shark. You bet big with strong hands and bluff in position, but you know when to let go of beat hands.',
+      tight: 'You are an ultra-disciplined rock. You fold marginal hands quickly, never gamble on weak high-cards, and only commit chips with solid pairs or better.',
+      wild: 'You are an unpredictable high-roller gambler who loves applying pressure, but you still care about not going broke.',
+      trash_talker: 'You are a clever poker shark who loves to needle the opponent while playing fundamentally sound, risk-conscious poker.'
     };
 
     const guide = personaGuides[persona] || personaGuides.balanced;
@@ -180,15 +180,25 @@ class OllamaClient {
     return `You are playing Heads-Up No-Limit Texas Hold'em Poker against a human player.
 ${guide}
 
-CRITICAL RULES:
-1. You only know your own 2 hole cards and the public board cards. You do NOT know the deck or opponent's cards.
-2. You must choose an action strictly from the provided "VALID_ACTIONS" list.
-3. If "check" is not in VALID_ACTIONS, you CANNOT check. You must call, raise, or fold.
-4. If choosing "raise", specify the total amount to bet (must be >= min_raise and <= your remaining chips).
-5. If choosing "give_up", you surrender the entire match. Only choose this if you genuinely want to resign.
-6. TIME LIMIT: You have up to 180 seconds to decide your move. Keep your JSON response immediate, concise, and focused.
-7. POKER FACE RULE: In your 'speech', NEVER reveal your cards, your hand rank, your equity, or whether you are bluffing. Act like a real poker player keeping a stone poker face! Only use banter, teasing, psychological pressure, or general table comments.
-8. You MUST respond with ONLY a single valid JSON object in this exact schema:
+CORE OBJECTIVE:
+Your goal is to WIN the 50,000 tournament and eliminate your opponent. YOU DEEPLY CARE ABOUT WINNING AND AVOIDING ELIMINATION. Every chip you preserve by folding is a chip you keep toward victory.
+
+DISCIPLINED POKER PRINCIPLES (HOW WINNING PROS PLAY):
+1. FOLDING IS STRATEGIC DISCIPLINE, NOT WEAKNESS:
+   - Amateurs call every bet and go broke. World champions fold 50-70% of hands when facing raises without strong equity.
+   - If you hold only High Card (unpaired) or a weak underpair and face a bet: FOLD! Never donate chips with weak hands.
+   - If the Pot Odds require higher equity than your hand possesses: FOLD!
+2. FREE CARD RULE:
+   - If "check" is in VALID_ACTIONS (call cost is 0), NEVER fold! Always check to see the next card for free.
+3. VALUE BETTING:
+   - Only bet or raise when you hold genuine strength: Two Pair, Trips, Straight, Flush, or strong top pairs (AA/KK/QQ/AK).
+4. TIME LIMIT:
+   - You have up to 180 seconds to decide. Keep your output concise and immediate.
+5. POKER FACE RULE:
+   - In your 'speech', NEVER reveal what cards or rank you hold, whether you are bluffing, or what your hand strength is. Use psychological table talk only.
+
+RESPONSE SCHEMA:
+You MUST respond with ONLY a single valid JSON object in this exact schema:
 {
   "action": "fold" | "check" | "call" | "raise" | "all-in" | "give_up",
   "amount": <number, required only for raise>,
@@ -200,23 +210,45 @@ Do not write explanations outside the JSON object.`;
 
   buildUserPrompt(obs, timeoutMs = 180000) {
     const timeLimitSec = Math.round(timeoutMs / 1000);
-    return `=== POKER SITUATION ===
+    const handDesc = obs.handDescription || 'Evaluating...';
+    const handRating = obs.handRating || 'Unknown';
+    const strengthScore = obs.handStrengthScore !== undefined ? obs.handStrengthScore : 5;
+    const callCost = obs.callAmountRequired || 0;
+    const potOdds = obs.potOddsPct || '0';
+    const riskPct = obs.stackRiskPct || '0';
+
+    let strategicAdvice = '';
+    if (callCost === 0) {
+      strategicAdvice = 'Cost to call is 0. Check for a free look at the next card, or raise if holding a strong hand.';
+    } else if (strengthScore <= 3) {
+      strategicAdvice = `WARNING: You hold a WEAK hand (${handDesc}, strength ${strengthScore}/10) facing a bet of ${callCost}. Calling here has NEGATIVE expected value. FOLDING is the mathematically disciplined play!`;
+    } else if (strengthScore <= 5 && Number(potOdds) > 28) {
+      strategicAdvice = `Marginal holding (${handDesc}) facing steep pot odds (${potOdds}%). FOLD unless you have strong reason to suspect a pure bluff.`;
+    } else if (strengthScore >= 7) {
+      strategicAdvice = `STRONG HOLDING (${handDesc}, strength ${strengthScore}/10). Raise for value or call to trap.`;
+    } else {
+      strategicAdvice = `Playable equity (${handDesc}). Evaluate if pot odds (${potOdds}%) justify calling ${callCost}.`;
+    }
+
+    return `=== POKER SITUATION & MATHEMATICAL EQUITY ANALYSIS ===
 - Stage: ${obs.gameStage.toUpperCase()}
 - Dealer: ${obs.dealer.toUpperCase()} (You are ${obs.isLlmDealer ? 'DEALER / SB' : 'BIG BLIND'})
-- Blinds: ${obs.blinds.smallBlind} / ${obs.blinds.bigBlind}
-- Pot Size: ${obs.pot}
-- Your Chips: ${obs.llmChips}
-- Human Chips: ${obs.humanChips}
-- Your Current Bet: ${obs.llmCurrentBet}
-- Human Current Bet: ${obs.humanCurrentBet}
-- Amount Needed to Call: ${obs.callAmountRequired}
 - Your Hole Cards: [${obs.llmHoleCards.join(', ')}]
-- Community Board Cards: [${obs.communityCards.join(', ')}]
+- Community Board Cards: [${obs.communityCards.join(', ') || 'None (Preflop)'}]
+- YOUR CURRENT HAND: ${handDesc}
+- HAND RATING: ${handRating} (Strength: ${strengthScore} / 10)
+- Blinds: ${obs.blinds.smallBlind} / ${obs.blinds.bigBlind} | Total Pot: ${obs.pot}
+- Your Chips: ${obs.llmChips} | Opponent Chips: ${obs.humanChips}
+- Current Call Cost: ${callCost} (${callCost === 0 ? 'FREE TO CHECK' : `Costs ${riskPct}% of your chips`})
+- Pot Odds Needed to Call: ${potOdds}%
 - VALID_ACTIONS: [${obs.validActions.join(', ')}]
 - Recent Hand Actions:
 ${obs.recentActions.map(a => `  * ${a}`).join('\n') || '  (Opening hand)'}
 
-Time Limit: You have ${timeLimitSec} seconds for this decision. Choose your move now. Output strict JSON only:`;
+STRATEGY GUIDANCE:
+${strategicAdvice}
+
+Time Limit: ${timeLimitSec} seconds. Output strict JSON only:`;
   }
 
   parseLlmResponse(rawText, obs) {
@@ -280,11 +312,13 @@ Time Limit: You have ${timeLimitSec} seconds for this decision. Choose your move
     const myChips = obs.llmChips || 50000;
     const potOdds = callCost / (pot + callCost);
 
-    // Assess preflop hole cards
+    // Assess hand strength using authoritative evaluation score if present
     const cards = obs.llmHoleCards || [];
     let handStrength = 0.5; // Baseline
 
-    if (cards.length >= 2) {
+    if (obs.handStrengthScore !== undefined) {
+      handStrength = Math.min(1.0, Math.max(0.1, obs.handStrengthScore / 10));
+    } else if (cards.length >= 2) {
       const r1 = this.rankToVal(cards[0]);
       const r2 = this.rankToVal(cards[1]);
       const isPair = r1 === r2;

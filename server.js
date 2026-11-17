@@ -270,6 +270,27 @@ const server = http.createServer(async (req, res) => {
 });
 
 if (require.main === module) {
+  // A second copy must fail with a readable message, not a stack trace.
+  server.on('error', (err) => {
+    if (err.code === 'EADDRINUSE') {
+      console.error('====================================================');
+      console.error(` Texas Poker is already running on port ${PORT}.   `);
+      console.error('                                                    ');
+      console.error(` Open http://localhost:${PORT}                      `);
+      console.error(' or stop the other server, then start this one.     ');
+      console.error('====================================================');
+      process.exit(1);
+    }
+
+    if (err.code === 'EACCES') {
+      console.error(`Port ${PORT} is not available (permission denied). Try another port: PORT=3001 node server.js`);
+      process.exit(1);
+    }
+
+    console.error('Server failed to start:', err.message);
+    process.exit(1);
+  });
+
   server.listen(PORT, () => {
     console.log(`====================================================`);
     console.log(` Texas Hold'em vs Ollama Poker Game Running!        `);

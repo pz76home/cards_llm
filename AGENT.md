@@ -224,6 +224,14 @@ node server.js           # manual play at http://localhost:3000
 - Any new terminal hand path must go through `settleHand()` and be added to the
   fuzz/invariant expectations.
 
+### Startup
+
+- `node server.js` binds `PORT` (default `3000`).
+- A second instance prints `Texas Poker is already running on port N` and exits
+  with code 1 instead of an `EADDRINUSE` stack trace.
+- To run another instance, pick a port: `PORT=3001 node server.js`
+  (PowerShell: `$env:PORT=3001; node server.js`).
+
 ---
 
 ## 8. Adding a bot

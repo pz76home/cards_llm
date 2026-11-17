@@ -3,7 +3,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { TexasHoldemGame } = require('../poker-engine');
 const { createBot, HeuristicBot, OllamaBot } = require('../src/bots');
-const { DEFAULT_OLLAMA_URL } = require('../src/bots/ollama/transport');
+const { OllamaTransport, DEFAULT_OLLAMA_URL } = require('../src/bots/ollama/transport');
+const { parseAction } = require('../src/bots/ollama/parse');
 
 function newGame() {
   const game = new TexasHoldemGame({ startingChips: 50000 });
@@ -198,4 +199,76 @@ test('the compatibility facade still exposes the old client API', () => {
   assert.equal(client.rankToVal('As'), 14);
   assert.equal(client.rankToVal('Td'), 10);
   assertLegal(obs, client.heuristicAiMove(obs, 'tight'), 'facade heuristic');
+});
+
+// Reasoning models (Qwen3 and friends) will spend the whole token budget on a
+// visible scratchpad unless thinking is turned off and JSON output is required.
+test('OllamaBot disables model thinking and asks the transport for JSON', async () => {
+  const obs = observationAt('preflop');
+  let captured = null;
+  const bot = new OllamaBot({
+    model: 'fake',
+    transport: fakeTransport(async (request) => {
+      captured = request;
+      return '{"action":"check","thought":"t","speech":"s"}';
+    }),
+    fallback: new HeuristicBot()
+  });
+
+  const decision = await bot.getAction(obs, {});
+  assertLegal(obs, decision, 'configured request');
+  assert.equal(captured.think, false);
+  assert.equal(captured.format, 'json');
+  assert.ok(captured.numPredict >= 300, `numPredict ${captured.numPredict} leaves no room for the JSON`);
+});
+
+test('generateText sends think:false, format:json and a usable token budget', async () => {
+  let captured = null;
+  const originalFetch = global.fetch;
+  global.fetch = async (url, init) => {
+    captured = { url, body: JSON.parse(init.body) };
+    return { ok: true, json: async () => ({ response: '{"action":"check"}' }) };
+  };
+
+  try {
+    const transport = new OllamaTransport();
+    const text = await transport.generateText({ model: 'fake', prompt: 'p' });
+    assert.equal(text, '{"action":"check"}');
+  } finally {
+    global.fetch = originalFetch;
+  }
+
+  assert.equal(captured.body.think, false);
+  assert.equal(captured.body.format, 'json');
+  assert.ok(captured.body.options.num_predict >= 300);
+});
+
+test('parseAction ignores a reasoning preamble and reads the JSON object', () => {
+  // Force a real call decision: the human raises, so calling is legal.
+  const game = newGame();
+  game.executeAction('human', 'raise', 3000);
+  const obs = game.getLlmObservation();
+  const raw = 'Here is my thinking: folding looks fine {but maybe not}.\n' +
+    '{"action":"call","thought":"pot odds","speech":"I call."}';
+  const decision = parseAction(raw, obs);
+
+  assert.equal(decision.action, 'call');
+  assert.equal(decision.thought, 'pot odds');
+  assert.equal(decision.speech, 'I call.');
+});
+
+test('parseAction strips closed and truncated thinking blocks', () => {
+  const obs = observationAt('preflop');
+
+  const closed = '<thinking>I should check {for free}.</thinking>' +
+    '{"action":"check","thought":"free card","speech":"Check."}';
+  assert.equal(parseAction(closed, obs).action, 'check');
+
+  const trailing = '{"action":"check","thought":"t","speech":"s"} <thinking>I am done';
+  assert.equal(parseAction(trailing, obs).action, 'check');
+});
+
+test('parseAction returns null when the reply is cut off mid-thought', () => {
+  const obs = observationAt('preflop');
+  assert.equal(parseAction('Here is my thinking: 1. Analyze the input\n2. Look at the pot', obs), null);
 });

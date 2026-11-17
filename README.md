@@ -110,3 +110,12 @@ npm test
 
 Covers the hand evaluator, blinds ladder, heads-up game flow, betting rules, card redaction, a seeded chip-conservation fuzz test, bot output legality/fallback behavior, and the LLM turn race tests (single-flight, cancel, stale results).
 
+## 🩺 Troubleshooting
+
+- **`[OllamaBot] Could not parse a move`** — usually a reasoning model spending
+  its token budget on an internal scratchpad instead of emitting the JSON
+  object. The request already sends `think: false` and `format: 'json'`; if it
+  still happens, the warning now prints the start of the raw reply so you can
+  tell truncation from a malformed answer.
+
+

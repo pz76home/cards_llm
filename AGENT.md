@@ -74,6 +74,13 @@ bot.getAction(observation, {
    annotates the speech with `(Ollama turn time note: ...)`).
 7. **Settled pot reads 0.** After a hand, `pot` is `0` and `lastPotWon` carries
    the amount the banner should report.
+8. **Reasoning models must not think out loud.** The Ollama request sets
+   `think: false`, `format: 'json'` and `num_predict: 300`. Without it, a
+   thinking model spends the whole budget on a visible scratchpad and is cut
+   off before the JSON object (`done_reason: "length"`), which surfaces as a
+   bogus "could not parse" fallback. `parseAction` also strips ` thinking`
+   blocks and scans for the last balanced JSON object as a second line of
+   defence.
 
 ---
 
@@ -168,6 +175,27 @@ and make it structurally impossible for one LLM turn to execute twice.
   concurrent calls, cancel, late reply ignored, timeout annotation, chips
   conserved); real browser run where Skip Wait resolved in 26 ms with exactly
   one action and no double advance.
+
+### Phase 3.1 — Thinking-model request fix (this change)
+
+Symptom: with a Qwen3-style reasoning model, `OllamaBot` logged
+`Could not parse a move ... using fallback bot` on most turns.
+
+Cause: `num_predict: 150` with thinking left on. The model wrote its reasoning
+into `response`, hit the cap (`done_reason: "length"`) and never reached the
+JSON object. The parser was behaving correctly; the request was wrong.
+
+- `ollama/transport.js` — defaults to `think: false`, `format: 'json'`,
+  `num_predict: 300`; the first two are sent top-level on `/api/generate`.
+- `ollama/index.js` — passes those options explicitly and logs a 200-character
+  preview of the raw reply when parsing fails.
+- `ollama/parse.js` — strips ` thinking`/`<thinking>` blocks (including an
+  unterminated trailing one) and extracts the last balanced JSON object with a
+  string/escape-aware brace scan.
+- Tests: request shape on both bot and transport, reasoning-preamble parsing,
+  thinking-block stripping, truncated-reply `null`.
+- Verification: 57/57 tests; a live Qwen3.6 turn returned legal JSON in 24 s
+  with no fallback warning.
 
 ---
 

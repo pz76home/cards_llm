@@ -123,7 +123,9 @@ class OllamaTransport {
     numGpu = 999,
     temperature = 0.4,
     topP = 0.9,
-    numPredict = 150,
+    numPredict = 300,
+    think = false,
+    format = 'json',
     timeoutMs = 180000,
     signal
   }) {
@@ -138,6 +140,10 @@ class OllamaTransport {
         prompt,
         stream: false,
         keep_alive: keepAlive,
+        // `think: false` keeps reasoning models from spending the token budget
+        // on a scratchpad, and `format: 'json'` constrains the reply's shape.
+        think,
+        format,
         options: {
           temperature,
           top_p: topP,

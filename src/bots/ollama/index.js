@@ -33,7 +33,12 @@ class OllamaBot {
         numGpu,
         temperature: persona === 'wild' ? 0.85 : 0.4,
         topP: 0.9,
-        numPredict: 150,
+        // Thinking models otherwise spend the whole budget on a visible
+        // scratchpad and are cut off before the JSON object appears
+        // (done_reason: "length"). Disable reasoning and require JSON.
+        think: false,
+        format: 'json',
+        numPredict: 300,
         timeoutMs,
         signal
       });
@@ -44,7 +49,11 @@ class OllamaBot {
         return parsed;
       }
 
+      const preview = rawText.replace(/\s+/g, ' ').trim().slice(0, 200);
       console.warn(`[OllamaBot] Could not parse a move from '${this.model}' - using fallback bot.`);
+      if (preview) {
+        console.warn(`[OllamaBot] Raw reply began: ${preview}${rawText.length > 200 ? '…' : ''}`);
+      }
       return this.fallbackMove(observation, persona);
     } catch (err) {
       // A user/manager cancellation must propagate: the caller already applied

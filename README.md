@@ -81,8 +81,23 @@ c:\Games\cards\
 ├── server.js            # Zero-dependency Node.js HTTP server & API endpoints
 ├── start.bat            # One-click Windows launcher
 ├── package.json         # Project metadata & start script
+├── src/
+│   └── engine/
+│       └── betting.js   # Shared betting math: call amounts, raise bounds, action legality
+├── test/                # node:test suites (evaluator, blinds, game flow, invariants)
 └── public/
     ├── index.html       # Casino poker table UI
     ├── style.css        # Luxury felt styling, responsive layout & animations
     └── app.js           # Client controller, sound synthesizer & game loop
 ```
+
+## 🧪 Tests
+
+Run the built-in test suite (no dependencies required):
+
+```bash
+npm test
+```
+
+Covers the hand evaluator, blinds ladder, heads-up game flow, betting rules, card redaction, and a seeded chip-conservation fuzz test.
+

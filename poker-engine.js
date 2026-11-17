@@ -400,6 +400,10 @@ class TexasHoldemGame {
 
     this.lastLlmThought = '';
     this.lastLlmSpeech = '';
+
+    // Monotonic counter bumped whenever the board state may change. Async
+    // callers capture it before awaiting and drop their result if it moved.
+    this.turnId = 0;
   }
 
   getElapsedSeconds() {
@@ -426,6 +430,8 @@ class TexasHoldemGame {
     }
 
     this.handCount++;
+    // Any in-flight async move from the previous hand is now stale.
+    this.turnId += 1;
     this.deck.reset();
     this.humanHoleCards = this.deck.drawCards(2);
     this.llmHoleCards = this.deck.drawCards(2);
@@ -584,6 +590,9 @@ class TexasHoldemGame {
     if (player !== this.activePlayer) {
       throw new Error(`It is not ${player}'s turn`);
     }
+
+    // The board can change from here on; invalidate anything already in flight.
+    this.turnId += 1;
 
     if (thought) this.lastLlmThought = thought;
     if (speech) this.lastLlmSpeech = speech;

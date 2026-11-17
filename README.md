@@ -77,14 +77,23 @@ http://localhost:3000
 ```
 c:\Games\cards\
 ├── poker-engine.js      # Authoritative 7-card Texas Hold'em evaluator & heads-up game engine
-├── ollama-client.js     # Ollama API client, system prompts, JSON validation & heuristic fallback
+├── ollama-client.js     # Legacy compatibility facade over src/bots (kept for external scripts)
 ├── server.js            # Zero-dependency Node.js HTTP server & API endpoints
 ├── start.bat            # One-click Windows launcher
 ├── package.json         # Project metadata & start script
 ├── src/
-│   └── engine/
-│       └── betting.js   # Shared betting math: call amounts, raise bounds, action legality
-├── test/                # node:test suites (evaluator, blinds, game flow, invariants)
+│   ├── engine/
+│   │   └── betting.js   # Shared betting math: call amounts, raise bounds, action legality
+│   ├── bots/
+│   │   ├── index.js     # createBot({ model, transport }) factory
+│   │   ├── heuristic.js # Built-in quick bot (offline, timeout fallback, Skip Wait)
+│   │   └── ollama/
+│   │       ├── index.js     # OllamaBot: prompt → generate → parse → fallback
+│   │       ├── transport.js # HTTP only: generate, list models, preload, abort/timeout
+│   │       ├── prompts.js   # Persona guides & prompt templates
+│   │       └── parse.js     # Model text → legal action (via normalizeAction)
+│   └── turns.js         # Single-flight LLM turn manager: cancel, stale-result guards
+├── test/                # node:test suites (engine, betting, redaction, bots, turn races)
 └── public/
     ├── index.html       # Casino poker table UI
     ├── style.css        # Luxury felt styling, responsive layout & animations
@@ -99,5 +108,5 @@ Run the built-in test suite (no dependencies required):
 npm test
 ```
 
-Covers the hand evaluator, blinds ladder, heads-up game flow, betting rules, card redaction, and a seeded chip-conservation fuzz test.
+Covers the hand evaluator, blinds ladder, heads-up game flow, betting rules, card redaction, a seeded chip-conservation fuzz test, bot output legality/fallback behavior, and the LLM turn race tests (single-flight, cancel, stale results).
 

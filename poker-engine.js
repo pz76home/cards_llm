@@ -1,5 +1,7 @@
 // poker-engine.js - Complete Texas Hold'em Engine & 7-Card Evaluator
 
+const { getLegalActions } = require('./src/engine/betting');
+
 const SUITS = ['s', 'h', 'd', 'c']; // Spades, Hearts, Diamonds, Clubs
 const SUIT_SYMBOLS = { s: '♠', h: '♥', d: '♦', c: '♣' };
 const SUIT_COLORS = { s: 'black', h: 'red', d: 'red', c: 'black' };
@@ -391,11 +393,17 @@ class TexasHoldemGame {
 
     this.winner = null; // Hand winner
     this.winningDescription = '';
+    this.showdownReached = false; // True only when hands are actually compared
+    this.lastPotWon = 0;
     this.isGameOver = false;
     this.gameOverReason = '';
 
     this.lastLlmThought = '';
     this.lastLlmSpeech = '';
+
+    // Monotonic counter bumped whenever the board state may change. Async
+    // callers capture it before awaiting and drop their result if it moved.
+    this.turnId = 0;
   }
 
   getElapsedSeconds() {
@@ -422,6 +430,8 @@ class TexasHoldemGame {
     }
 
     this.handCount++;
+    // Any in-flight async move from the previous hand is now stale.
+    this.turnId += 1;
     this.deck.reset();
     this.humanHoleCards = this.deck.drawCards(2);
     this.llmHoleCards = this.deck.drawCards(2);
@@ -439,6 +449,8 @@ class TexasHoldemGame {
     this.history = [];
     this.winner = null;
     this.winningDescription = '';
+    this.showdownReached = false;
+    this.lastPotWon = 0;
     this.lastLlmThought = '';
     this.lastLlmSpeech = '';
 
@@ -542,72 +554,35 @@ class TexasHoldemGame {
     this.handLogs.push(entry);
   }
 
-  // Get valid actions for active player
+  // Get valid actions for active player. Every rule lives in the shared
+  // betting module so the UI, the LLM and the heuristic bot never disagree.
   getValidActions(player, ignoreTurn = false) {
-    if (this.stage === 'showdown' || this.stage === 'ended' || this.isGameOver) {
-      return [];
-    }
-    if (!ignoreTurn && player !== this.activePlayer) {
-      return [];
-    }
+    return getLegalActions(this, player, { ignoreTurn, includeResign: true });
+  }
 
-    const opponent = player === 'human' ? 'llm' : 'human';
-    const playerChips = this.getPlayerChips(player);
-    const opponentChips = this.getPlayerChips(opponent);
+  // Single terminal path for a hand: refund uncalled chips, pay the pot, clear
+  // the betting state and record the result. `showdown` gates card reveals.
+  settleHand(winner, { showdown = false } = {}) {
+    this.balanceUncalledBets();
 
-    // If player has 0 chips, they are already all-in! No further actions can be taken.
-    if (playerChips === 0) {
-      return [];
-    }
-
-    const playerBet = player === 'human' ? this.humanBet : this.llmBet;
-    const callAmount = Math.max(0, this.currentBet - playerBet);
-    const actualCall = Math.min(playerChips, callAmount);
-
-    const actions = [];
-
-    // Fold is always valid
-    actions.push({ type: 'fold', label: 'Fold' });
-
-    // Check vs Call
-    if (callAmount === 0) {
-      actions.push({ type: 'check', label: 'Check' });
-    } else {
-      actions.push({
-        type: 'call',
-        label: `Call ${actualCall}${actualCall === playerChips ? ' (All-In)' : ''}`,
-        amount: actualCall
-      });
+    const pot = this.pot;
+    if (winner === 'split') {
+      const half = Math.floor(pot / 2);
+      this.addChips('human', half);
+      this.addChips('llm', half + (pot % 2));
+    } else if (winner === 'human' || winner === 'llm') {
+      this.addChips(winner, pot);
     }
 
-    // Raise / All-in
-    // CRITICAL: Player can only raise if:
-    // 1. Player has more chips than callAmount (playerChips > callAmount)
-    // 2. AND opponent has chips left (opponentChips > 0)! Opponent cannot be raised if already all-in!
-    if (playerChips > callAmount && opponentChips > 0) {
-      const minRaiseAmount = Math.max(this.currentBet * 2, this.currentBet + this.getCurrentBlinds().bigBlind);
-      const minAdditional = minRaiseAmount - playerBet;
-      const actualMinRaise = Math.min(playerChips, minAdditional);
-      const maxRaise = playerChips; // All-in
-
-      actions.push({
-        type: 'raise',
-        label: 'Raise',
-        min: actualMinRaise,
-        max: maxRaise,
-        callAmount: callAmount
-      });
-      actions.push({
-        type: 'all-in',
-        label: `All-In (${playerChips})`,
-        amount: playerChips
-      });
-    }
-
-    // Give Up / Resign (ends game)
-    actions.push({ type: 'give_up', label: 'Give Up / Resign' });
-
-    return actions;
+    this.lastPotWon = pot;
+    this.pot = 0;
+    this.humanBet = 0;
+    this.llmBet = 0;
+    this.currentBet = 0;
+    this.activePlayer = null;
+    this.stage = 'showdown';
+    this.showdownReached = showdown;
+    return pot;
   }
 
   // Execute an action
@@ -615,6 +590,9 @@ class TexasHoldemGame {
     if (player !== this.activePlayer) {
       throw new Error(`It is not ${player}'s turn`);
     }
+
+    // The board can change from here on; invalidate anything already in flight.
+    this.turnId += 1;
 
     if (thought) this.lastLlmThought = thought;
     if (speech) this.lastLlmSpeech = speech;
@@ -626,6 +604,8 @@ class TexasHoldemGame {
 
     // 1. Give Up
     if (actionType === 'give_up') {
+      // Settle the pot so no chips disappear, then end the tournament.
+      this.settleHand(opponent, { showdown: false });
       this.isGameOver = true;
       this.stage = 'ended';
       this.activePlayer = null;
@@ -642,11 +622,10 @@ class TexasHoldemGame {
     // 2. Fold
     if (actionType === 'fold') {
       this.logAction(player, 'folds');
+      const potWon = this.settleHand(opponent, { showdown: false });
       this.winner = opponent;
-      this.winningDescription = `${opponent.toUpperCase()} wins pot of ${this.pot} (opponent folded)`;
-      this.addChips(opponent, this.pot);
-      this.stage = 'showdown';
-      this.activePlayer = null;
+      this.winningDescription = `${opponent.toUpperCase()} wins pot of ${potWon} (opponent folded)`;
+      this.logAction('dealer', `${opponent.toUpperCase()} wins ${potWon} (fold)`);
       this.checkTournamentEnd();
       return { success: true, handComplete: true };
     }
@@ -812,9 +791,6 @@ class TexasHoldemGame {
   }
 
   resolveShowdown() {
-    this.stage = 'showdown';
-    this.activePlayer = null;
-
     const humanAllCards = [...this.humanHoleCards, ...this.communityCards];
     const llmAllCards = [...this.llmHoleCards, ...this.communityCards];
 
@@ -822,25 +798,20 @@ class TexasHoldemGame {
     const llmEval = evaluate7Cards(llmAllCards);
 
     const cmp = compareHands(humanEval, llmEval);
+    const winner = cmp > 0 ? 'human' : cmp < 0 ? 'llm' : 'split';
+    const potWon = this.settleHand(winner, { showdown: true });
 
     if (cmp > 0) {
       this.winner = 'human';
-      this.winningDescription = `Human wins pot of ${this.pot} with ${humanEval.description}`;
-      this.addChips('human', this.pot);
+      this.winningDescription = `Human wins pot of ${potWon} with ${humanEval.description}`;
       this.logAction('dealer', `Human wins with ${humanEval.description} vs LLM's ${llmEval.description}`);
     } else if (cmp < 0) {
       this.winner = 'llm';
-      this.winningDescription = `LLM wins pot of ${this.pot} with ${llmEval.description}`;
-      this.addChips('llm', this.pot);
+      this.winningDescription = `LLM wins pot of ${potWon} with ${llmEval.description}`;
       this.logAction('dealer', `LLM wins with ${llmEval.description} vs Human's ${humanEval.description}`);
     } else {
-      // Split pot
       this.winner = 'split';
-      const half = Math.floor(this.pot / 2);
-      const remainder = this.pot % 2;
-      this.addChips('human', half);
-      this.addChips('llm', half + remainder);
-      this.winningDescription = `Split pot of ${this.pot} (${humanEval.description})`;
+      this.winningDescription = `Split pot of ${potWon} (${humanEval.description})`;
       this.logAction('dealer', `Split pot! Both have ${humanEval.description}`);
     }
 
@@ -859,9 +830,10 @@ class TexasHoldemGame {
     }
   }
 
-  // Safe client state (hiding LLM hole cards unless showdown or ended)
+  // Safe client state (hiding LLM hole cards unless a real showdown happened)
   getClientState() {
-    const showLlmCards = this.stage === 'showdown' || this.stage === 'ended';
+    // Folding also ends the hand, so stage alone cannot be the reveal gate.
+    const showLlmCards = this.showdownReached || this.stage === 'ended';
 
     const humanAllCards = [...this.humanHoleCards, ...this.communityCards];
     const humanEval = humanAllCards.length >= 5 ? evaluate7Cards(humanAllCards) : null;
@@ -896,6 +868,8 @@ class TexasHoldemGame {
       blinds: this.getCurrentBlinds(),
       winner: this.winner,
       winningDescription: this.winningDescription,
+      showdownReached: this.showdownReached,
+      lastPotWon: this.lastPotWon,
       isGameOver: this.isGameOver,
       gameOverReason: this.gameOverReason,
       lastLlmThought: showLlmCards ? this.lastLlmThought : '',
@@ -908,7 +882,10 @@ class TexasHoldemGame {
   // Information strictly allowed for Ollama (NO deck peek, NO opponent hole cards!)
   getLlmObservation() {
     const callAmount = Math.max(0, this.currentBet - this.llmBet);
-    const validActions = this.getValidActions('llm', true);
+    // give_up is human-only: the LLM must never resign the match on its own.
+    const legalActions = getLegalActions(this, 'llm', { ignoreTurn: true, includeResign: false });
+    const validActions = legalActions.map(a => a.type);
+    const raiseAction = legalActions.find(a => a.type === 'raise');
 
     const allCards = [...this.llmHoleCards, ...this.communityCards];
     let handRating = 'Unknown';
@@ -985,7 +962,10 @@ class TexasHoldemGame {
       callAmountRequired: callAmount,
       communityCards: this.communityCards.map(c => c.toCode()),
       llmHoleCards: this.llmHoleCards.map(c => c.toCode()),
-      validActions: validActions.map(a => a.type),
+      validActions,
+      legalActions,
+      raiseMin: raiseAction ? raiseAction.min : null,
+      raiseMax: raiseAction ? raiseAction.max : null,
       recentActions: this.history.slice(-8).map(h => `${h.player}: ${h.text}`),
       handDescription,
       handRating,

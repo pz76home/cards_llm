@@ -16,7 +16,7 @@ let loadedModelsInVram = [];
 let llmThinkingTimer = null;
 let llmThinkingSeconds = 0;
 let isPreloading = false;
-let isLlmAbortRequested = false;
+let llmTurnController = null;
 
 // Web Audio API Sound Synthesizer
 class SoundEffects {
@@ -238,24 +238,36 @@ function setupEventListeners() {
   vramStatusBadge.addEventListener('click', preloadSelectedModel);
 
   skipLlmWaitBtn.addEventListener('click', async () => {
-    isLlmAbortRequested = true;
+    skipLlmWaitBtn.disabled = true;
     skipLlmWaitBtn.textContent = 'Switching to Quick Bot...';
+
+    // Stop waiting on the model locally; the server aborts it too.
+    if (llmTurnController) {
+      llmTurnController.abort();
+      llmTurnController = null;
+    }
+
     try {
-      const res = await fetch('/api/game/llm-turn', {
+      const res = await fetch('/api/game/llm-turn/cancel', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-          model: 'builtin-heuristic',
-          persona: personaSelect.value
-        })
+        body: '{}'
       });
       const data = await res.json();
-      gameState = data.state;
-      sounds.playChip();
-      renderState();
+      if (!res.ok) {
+        console.error('Error switching move:', data.error);
+        return;
+      }
+      if (data.state) {
+        gameState = data.state;
+        sounds.playChip();
+        renderState();
+      }
       checkIfLlmTurn();
     } catch (err) {
       console.error('Error switching move:', err);
+    } finally {
+      skipLlmWaitBtn.disabled = false;
     }
   });
 
@@ -503,8 +515,17 @@ async function preloadSelectedModel() {
   }
 }
 
+// Drop any local handle on an in-flight LLM request (server aborts its own).
+function resetLlmTurnRequest() {
+  if (llmTurnController) {
+    llmTurnController.abort();
+    llmTurnController = null;
+  }
+}
+
 // Start New Tournament Game
 async function startNewGame() {
+  resetLlmTurnRequest();
   try {
     const res = await fetch('/api/game/new', {
       method: 'POST',
@@ -527,6 +548,7 @@ async function startNewGame() {
 
 // Request Next Hand
 async function requestNextHand() {
+  resetLlmTurnRequest();
   try {
     sounds.playCard();
     const res = await fetch('/api/game/next-hand', { method: 'POST' });
@@ -574,6 +596,9 @@ async function checkIfLlmTurn() {
   }
 
   if (gameState.activePlayer === 'llm') {
+    // A request is already in flight; the skip button cancels it by id.
+    if (llmTurnController) return;
+
     // Show AI thinking indicator
     llmInfoBox.classList.add('active-turn');
     humanInfoBox.classList.remove('active-turn');
@@ -586,7 +611,7 @@ async function checkIfLlmTurn() {
     llmThinkingSeconds = 0;
     skipLlmWaitBtn.style.display = isLocalLlm ? 'inline-block' : 'none';
     skipLlmWaitBtn.textContent = '⏩ Skip Wait & Use Quick Bot';
-    isLlmAbortRequested = false;
+    skipLlmWaitBtn.disabled = false;
 
     const limitSec = Math.round(configuredTimeout / 1000);
     const updateThinkingLabel = () => {
@@ -607,7 +632,12 @@ async function checkIfLlmTurn() {
     // Disable human controls while LLM thinks
     disableHumanControls(true);
 
+    let controller = null;
+
     try {
+      llmTurnController = new AbortController();
+      controller = llmTurnController;
+
       const res = await fetch('/api/game/llm-turn', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
@@ -617,24 +647,42 @@ async function checkIfLlmTurn() {
           timeoutMs: configuredTimeout,
           keepAlive: configuredKeepAlive,
           numGpu: configuredNumGpu
-        })
+        }),
+        signal: controller.signal
       });
 
+      if (llmTurnController === controller) llmTurnController = null;
       if (llmThinkingTimer) clearInterval(llmThinkingTimer);
       skipLlmWaitBtn.style.display = 'none';
 
-      // Check if user already skipped this turn
-      if (isLlmAbortRequested) return;
+      // The skip handler already rendered the replacement move.
+      if (controller.signal.aborted) return;
 
       const data = await res.json();
+
+      if (!res.ok) {
+        if (data.state) {
+          gameState = data.state;
+          renderState();
+        }
+        console.error('LLM turn failed:', data.error || res.status);
+        return;
+      }
+
+      // A cancel or a newer action already settled this turn. Do not render an
+      // older snapshot and do not trigger another LLM request from here.
+      if (data.cancelled || data.stale) return;
+
       gameState = data.state;
 
       sounds.playChip();
       renderState();
       checkIfLlmTurn();
     } catch (err) {
+      if (llmTurnController === controller) llmTurnController = null;
       if (llmThinkingTimer) clearInterval(llmThinkingTimer);
       skipLlmWaitBtn.style.display = 'none';
+      if (err.name === 'AbortError') return;
       console.error('Error in LLM turn:', err);
     }
   } else {
